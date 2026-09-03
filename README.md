@@ -447,6 +447,16 @@ The mode is selected through the secret/profile, so existing Desktop, Android, a
 iOS proof-of-concept clients need no new setting or client-side transport code. Use
 different secrets when exposing several modes on one hostname.
 
+macOS WebKit can serialize WebSocket handshakes to the same host. With
+`websocket-lanes`, a burst of main, media, and connection-test streams can therefore
+take longer to open than the client's connection timeout. The bridge cancels a
+pending handshake when the client closes that stream, but each remaining lane
+still needs its own handshake. If connection establishment is slow or media
+streams keep reconnecting, use `"carrier_mode": "websocket"` in the affected
+profile in `/etc/tproxy-server/profiles.json`, then run
+`sudo systemctl restart tproxy-server`. Clients reconnect using the new mode with
+the same hostname and secret; the public website configuration needs no change.
+
 Run one official MTProxy process and listener per profile when profiles need
 separate quotas or routing. Extend `firewall.nft` to include every added backend
 port. A single MTProxy may receive repeated `-S` arguments only when all profiles

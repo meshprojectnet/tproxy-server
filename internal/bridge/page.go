@@ -375,6 +375,7 @@ function queueWebSocketLane(value){
  if(!value.id||(!lane&&closedLanes.has(value.id)))throw new Error('closed lane was reused');
  if(!lane&&value.type!==1)throw new Error('lane did not begin with OPEN');
  lane=lane||ensureLane(value.id);
+ if(value.type===3&&!lane.opened){finishWebSocketLane(lane,false);return}
  if(!reserve(value.data,lane)){fail();return}
  lane.pending.push(value.data);if(value.type===3)lane.localClosed=true;
  if(!lane.socket)openWebSocketLane(lane);else runWebSocketLaneUp(lane);
