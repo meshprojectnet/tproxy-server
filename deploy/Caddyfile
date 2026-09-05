@@ -1,6 +1,6 @@
 {
 	admin off
-	# Отключаем Automatic HTTPS, чтобы Caddy вообще не слушал 80 порт
+	# Отключаем automatic HTTP/ACME и слушивание 80 порта
 	auto_https off
 
 	servers {
@@ -13,7 +13,7 @@
 }
 
 {$TPROXY_HOSTNAME}:443 {
-	# Указываем путь к вашему сертификату и ключу
+	# Указываем путь к вашим готовым сертификатам
 	tls /root/cert/endpoint.hy2.fun/fullchain.pem /root/cert/endpoint.hy2.fun/privkey.pem
 
 	encode zstd gzip
