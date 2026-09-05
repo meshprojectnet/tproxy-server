@@ -274,8 +274,10 @@ install -m 0755 "$repository/deploy/refresh-mtproxy-config.sh" /usr/local/sbin/r
 
 /usr/local/bin/tproxy-server -config /etc/tproxy-server/config.json \
 	-profiles-file /etc/tproxy-server/profiles.json -check
-TPROXY_HOSTNAME="$hostname" TPROXY_SITE_ROOT=/srv/tproxy-site \
-	/usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+export TPROXY_HOSTNAME="$hostname"
+export TPROXY_SITE_ROOT=/srv/tproxy-site
+
+/usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
 systemctl daemon-reload
 systemctl enable --now tproxy-firewall.service
