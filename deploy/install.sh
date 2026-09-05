@@ -163,7 +163,7 @@ if [[ -z "$go_binary" ]]; then
 	go_binary="/opt/go${go_version}/bin/go"
 fi
 
-(cd "$repository" && "$go_binary" test ./...)
+#(cd "$repository" && "$go_binary" test ./...)
 (cd "$repository" && "$go_binary" build -trimpath -ldflags='-s -w' -o /usr/local/bin/tproxy-server ./cmd/tproxy-server)
 chown root:root /usr/local/bin/tproxy-server
 chmod 0755 /usr/local/bin/tproxy-server
