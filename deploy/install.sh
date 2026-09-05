@@ -2,12 +2,12 @@
 set -euo pipefail
 umask 077
 
-hostname=
-secret=
+hostname=""
+secret=""
 email=""
-site_dir=
-site_upstream=
-static_routes=exact
+site_dir=""
+site_upstream=""
+static_routes="exact"
 mtproxy_workers=1
 mtproxy_max_connections=4096
 cert_path="/etc/ssl/tproxy/fullchain.pem"
@@ -124,7 +124,6 @@ fi
 install -d -o root -g caddy -m 0750 /etc/caddy
 install -d -o caddy -g caddy -m 0750 /var/lib/caddy
 
-# Права на сертификат для пользователя caddy
 chown -R root:caddy "$(dirname "$cert_path")" || true
 chmod 0644 "$cert_path" || true
 chmod 0600 "$key_path" || true
@@ -135,7 +134,7 @@ if ! id tproxy >/dev/null 2>&1; then
 	useradd --system --home /nonexistent --shell /usr/sbin/nologin tproxy
 fi
 
-go_binary=
+go_binary=""
 if command -v go >/dev/null 2>&1; then
 	go_minor="$(go env GOVERSION | sed -E 's/^go1\.([0-9]+).*/\1/')"
 	if [[ "$go_minor" =~ ^[0-9]+$ ]] && [[ "$go_minor" -ge 20 ]]; then
@@ -163,7 +162,6 @@ if [[ -z "$go_binary" ]]; then
 	go_binary="/opt/go${go_version}/bin/go"
 fi
 
-#(cd "$repository" && "$go_binary" test ./...)
 (cd "$repository" && "$go_binary" build -trimpath -ldflags='-s -w' -o /usr/local/bin/tproxy-server ./cmd/tproxy-server)
 chown root:root /usr/local/bin/tproxy-server
 chmod 0755 /usr/local/bin/tproxy-server
@@ -198,6 +196,7 @@ $public_source
   "profiles_file": "/run/credentials/tproxy-server.service/profiles.json"
 }
 EOF
+
 cat > /etc/tproxy-server/profiles.json <<EOF
 {"profiles":[{"name":"default","secret":"$secret","backend":"127.0.0.1:2398"}]}
 EOF
@@ -209,6 +208,7 @@ backend_secret="$secret"
 if [[ "$backend_secret" == dd* ]] && [[ ${#backend_secret} -eq 34 ]]; then
 	backend_secret="${backend_secret:2}"
 fi
+
 cat > /etc/mtproxy/mtproxy.env <<EOF
 MTPROXY_SECRET=$backend_secret
 MTPROXY_WORKERS=$mtproxy_workers
@@ -217,7 +217,9 @@ EOF
 chown root:mtproxy /etc/mtproxy/mtproxy.env
 chmod 0640 /etc/mtproxy/mtproxy.env
 
-# Генерация модифицированного Caddyfile (свои сертификаты + отключенный 80 порт)
+export TPROXY_HOSTNAME="$hostname"
+export TPROXY_SITE_ROOT="/srv/tproxy-site"
+
 cat > /etc/caddy/Caddyfile <<EOF
 {
 	admin off
@@ -232,7 +234,7 @@ cat > /etc/caddy/Caddyfile <<EOF
 	}
 }
 
-{$TPROXY_HOSTNAME}:443 {
+{\$TPROXY_HOSTNAME}:443 {
 	tls $cert_path $key_path
 
 	encode zstd gzip
@@ -251,7 +253,7 @@ cat > /etc/caddy/Caddyfile <<EOF
 			Cache-Control "no-store"
 			Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		}
-		respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
+		respond "{\$http.error.status_code} {\$http.error.status_text}" {\$http.error.status_code}
 	}
 }
 EOF
@@ -260,8 +262,8 @@ install -m 0644 "$repository/deploy/caddy.service" /etc/systemd/system/caddy.ser
 install -d -m 0755 /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/tproxy.conf <<EOF
 [Service]
-Environment=TPROXY_HOSTNAME=$hostname
-Environment=TPROXY_SITE_ROOT=/srv/tproxy-site
+Environment="TPROXY_HOSTNAME=$hostname"
+Environment="TPROXY_SITE_ROOT=/srv/tproxy-site"
 EOF
 
 install -m 0644 "$repository/deploy/tproxy-server.service" /etc/systemd/system/tproxy-server.service
@@ -274,8 +276,6 @@ install -m 0755 "$repository/deploy/refresh-mtproxy-config.sh" /usr/local/sbin/r
 
 /usr/local/bin/tproxy-server -config /etc/tproxy-server/config.json \
 	-profiles-file /etc/tproxy-server/profiles.json -check
-export TPROXY_HOSTNAME="$hostname"
-export TPROXY_SITE_ROOT=/srv/tproxy-site
 
 /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
@@ -288,7 +288,7 @@ systemctl enable --now refresh-mtproxy-config.timer
 systemctl enable --now caddy.service
 systemctl restart caddy.service
 
-relay_ready=
+relay_ready=""
 for ((attempt = 0; attempt != 20; ++attempt)); do
 	if curl --fail --silent --output /dev/null \
 			http://127.0.0.1:8081/readyz; then
