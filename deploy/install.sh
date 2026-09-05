@@ -4,15 +4,17 @@ umask 077
 
 hostname=
 secret=
-email=
+email=""
 site_dir=
 site_upstream=
 static_routes=exact
 mtproxy_workers=1
 mtproxy_max_connections=4096
+cert_path="/etc/ssl/tproxy/fullchain.pem"
+key_path="/etc/ssl/tproxy/privkey.pem"
 
 usage() {
-	echo "usage: sudo ./deploy/install.sh --hostname proxy.example.com --email admin@example.com [--site-dir DIR | --site-upstream URL] [--static-routes exact|legacy] [--secret 32-or-34-hex] [--mtproxy-workers 1] [--mtproxy-max-connections 4096]" >&2
+	echo "usage: sudo ./deploy/install.sh --hostname proxy.example.com [--cert /path/to/cert.pem] [--key /path/to/key.pem] [--email admin@example.com] [--site-dir DIR | --site-upstream URL] [--static-routes exact|legacy] [--secret 32-or-34-hex] [--mtproxy-workers 1] [--mtproxy-max-connections 4096]" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -20,6 +22,8 @@ while [[ $# -gt 0 ]]; do
 		--hostname) hostname="${2:-}"; shift 2 ;;
 		--secret) secret="${2:-}"; shift 2 ;;
 		--email) email="${2:-}"; shift 2 ;;
+		--cert) cert_path="${2:-}"; shift 2 ;;
+		--key) key_path="${2:-}"; shift 2 ;;
 		--site-dir) site_dir="${2:-}"; shift 2 ;;
 		--site-upstream) site_upstream="${2:-}"; shift 2 ;;
 		--static-routes) static_routes="${2:-}"; shift 2 ;;
@@ -49,8 +53,12 @@ if [[ ! "$secret" =~ ^([0-9a-f]{32}|dd[0-9a-f]{32})$ ]]; then
 	echo "secret must be 32 lowercase hex characters, optionally prefixed with dd" >&2
 	exit 2
 fi
-if [[ ! "$email" =~ ^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-	echo "a valid ACME contact email is required" >&2
+if [[ ! -f "$cert_path" ]]; then
+	echo "certificate file not found: $cert_path" >&2
+	exit 2
+fi
+if [[ ! -f "$key_path" ]]; then
+	echo "private key file not found: $key_path" >&2
 	exit 2
 fi
 if [[ ! "$mtproxy_workers" =~ ^[1-9][0-9]*$ ]] || ((mtproxy_workers > 256)); then
@@ -91,6 +99,7 @@ elif [[ ! -f /srv/tproxy-site/index.html ]]; then
 	echo "see PUBLIC_SITE.md for the site package contract" >&2
 	exit 2
 fi
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl nftables
@@ -114,6 +123,11 @@ if ! id caddy >/dev/null 2>&1; then
 fi
 install -d -o root -g caddy -m 0750 /etc/caddy
 install -d -o caddy -g caddy -m 0750 /var/lib/caddy
+
+# Права на сертификат для пользователя caddy
+chown -R root:caddy "$(dirname "$cert_path")" || true
+chmod 0644 "$cert_path" || true
+chmod 0600 "$key_path" || true
 
 "$repository/deploy/install-mtproxy.sh"
 
@@ -167,7 +181,7 @@ elif [[ -n "$site_dir" ]] && [[ "$site_dir" != "$(cd /srv/tproxy-site && pwd -P)
 fi
 
 if [[ -n "$site_upstream" ]]; then
-	public_source="  \"public_upstream\": \"$site_upstream\","
+	public_source='  "public_upstream": "'"$site_upstream"'",'
 else
 	public_source='  "public_dir": "/srv/tproxy-site",'
 fi
@@ -203,21 +217,51 @@ EOF
 chown root:mtproxy /etc/mtproxy/mtproxy.env
 chmod 0640 /etc/mtproxy/mtproxy.env
 
-install -m 0644 "$repository/deploy/Caddyfile" /etc/caddy/Caddyfile.tproxy
-if [[ -e /etc/caddy/Caddyfile ]] && ! cmp -s /etc/caddy/Caddyfile "$repository/deploy/Caddyfile"; then
-	cp -a /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.before-tproxy.$(date +%Y%m%d%H%M%S)"
-fi
-install -m 0644 "$repository/deploy/Caddyfile" /etc/caddy/Caddyfile
-if [[ -e /etc/systemd/system/caddy.service ]] && ! cmp -s /etc/systemd/system/caddy.service "$repository/deploy/caddy.service"; then
-	cp -a /etc/systemd/system/caddy.service "/etc/systemd/system/caddy.service.before-tproxy.$(date +%Y%m%d%H%M%S)"
-fi
+# Генерация модифицированного Caddyfile (свои сертификаты + отключенный 80 порт)
+cat > /etc/caddy/Caddyfile <<EOF
+{
+	admin off
+	auto_https off
+
+	servers {
+		protocols h1 h2
+		timeouts {
+			read_header 10s
+			read_body 60s
+		}
+	}
+}
+
+{$TPROXY_HOSTNAME}:443 {
+	tls $cert_path $key_path
+
+	encode zstd gzip
+	header {
+		-Via
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+	reverse_proxy 127.0.0.1:8080 {
+		transport http {
+			response_header_timeout 40s
+		}
+	}
+
+	handle_errors {
+		header {
+			Cache-Control "no-store"
+			Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		}
+		respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
+	}
+}
+EOF
+
 install -m 0644 "$repository/deploy/caddy.service" /etc/systemd/system/caddy.service
 install -d -m 0755 /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/tproxy.conf <<EOF
 [Service]
 Environment=TPROXY_HOSTNAME=$hostname
 Environment=TPROXY_SITE_ROOT=/srv/tproxy-site
-Environment=ACME_EMAIL=$email
 EOF
 
 install -m 0644 "$repository/deploy/tproxy-server.service" /etc/systemd/system/tproxy-server.service
@@ -230,8 +274,9 @@ install -m 0755 "$repository/deploy/refresh-mtproxy-config.sh" /usr/local/sbin/r
 
 /usr/local/bin/tproxy-server -config /etc/tproxy-server/config.json \
 	-profiles-file /etc/tproxy-server/profiles.json -check
-TPROXY_HOSTNAME="$hostname" TPROXY_SITE_ROOT=/srv/tproxy-site ACME_EMAIL="$email" \
+TPROXY_HOSTNAME="$hostname" TPROXY_SITE_ROOT=/srv/tproxy-site \
 	/usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
 systemctl daemon-reload
 systemctl enable --now tproxy-firewall.service
 systemctl enable --now mtproxy.service
