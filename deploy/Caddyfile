@@ -14,7 +14,7 @@
 
 {$TPROXY_HOSTNAME}:443 {
 	# Указываем путь к вашему сертификату и ключу
-	tls /path/to/fullchain.pem /path/to/privkey.pem
+	tls /root/cert/endpoint.hy2.fun/fullchain.pem /root/cert/endpoint.hy2.fun/privkey.pem
 
 	encode zstd gzip
 	header {
